@@ -6,7 +6,7 @@ from scipy.optimize import brentq
 import plotly.graph_objects as go
 import yfinance as yf
 
-# Set page configuration
+
 st.set_page_config(page_title="Option Pricing Calculator", layout="wide")
 
 @st.cache_data
@@ -89,9 +89,9 @@ def implied_volatility(S, K, T, r, market_price, option_type='call'):
     try:
         return brentq(difference, a, b)
     except ValueError:
-        return None  # Return None if the volatility could not be calculated
+        return None  
 
-# Streamlit app layout
+# app layout
 st.title("Option Pricing Calculator")
 
 st.markdown("""
@@ -121,7 +121,7 @@ with st.sidebar:
     
 
 
-# Plot selection options
+# plot selection
 plot_options = {
     "Black-Scholes": ["Option Price Heatmap", "Option Price vs Stock Price", "Option Price vs Interest Rate", "Sensitivity Analysis"],
     "Binomial": ["Option Price Heatmap", "Option Price vs Stock Price", "Option Price vs Interest Rate", "Sensitivity Analysis"],
@@ -174,7 +174,7 @@ if st.button("Calculate") or st.session_state.calc:
     df = pd.DataFrame(data)
     st.table(df)
 
-    # Plot based on user selection
+    # Plot based on your selection
     if model == "Black-Scholes" or model == "Binomial":
         if plot_type == "Option Price Heatmap":
             T_min = st.slider("Minimum Time to Maturity", 0.1, 5.0, 0.1, key='T_min')
@@ -258,7 +258,7 @@ if st.button("Calculate") or st.session_state.calc:
             fig.update_layout(title='Monte Carlo Simulation Results', xaxis_title='Option Price', yaxis_title='Frequency', xaxis=dict(range=[price_min, price_max]))
             st.plotly_chart(fig)
 
-# Greeks visualization for Black-Scholes model
+# add on (bonus) Greeks visualization for Black-Scholes model
 if model == "Black-Scholes" and plot_type == "Sensitivity Analysis":
     S_range = np.linspace(0.5 * S, 1.5 * S, 100)
     delta_values = []
