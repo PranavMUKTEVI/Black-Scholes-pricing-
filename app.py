@@ -9,8 +9,6 @@ import yfinance as yf
 # Set page configuration
 st.set_page_config(page_title="Option Pricing Calculator", layout="wide")
 
-# Define functions for each model (as in your previous code)
-
 @st.cache_data
 def black_scholes(S, K, T, r, sigma, option_type='call'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
@@ -101,6 +99,15 @@ st.markdown("""
 """)
 
 with st.sidebar:
+    st.markdown(
+    """
+    <div style='display: flex; align-items: left;'>
+        Created by  <img src='https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png' alt='LinkedIn' style='width: 24px; margin-right: 10px;'>
+        <a href='https://www.linkedin.com/in/pranav-muktevi' target='_blank'>Pranav Muktevi</a>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
     st.header("Input Parameters")
     model = st.selectbox("Select Option Pricing Model", ["Black-Scholes", "Binomial", "Monte Carlo"])
     S = st.number_input("Current Stock Price (S)", min_value=0.0, max_value=1000.0, value=100.0, step=1.0, key='S')
@@ -111,6 +118,8 @@ with st.sidebar:
     option_type = st.selectbox("Option Type", ["call", "put"], key='option_type')
     real_price = st.number_input("Real-time Option Price", min_value=0.0, value=0.0, key='real_price')
     ticker = st.text_input("Enter Ticker Symbol", "AAPL", key='ticker')
+    
+
 
 # Plot selection options
 plot_options = {
@@ -275,4 +284,5 @@ if model == "Black-Scholes" and plot_type == "Sensitivity Analysis":
     
     fig.update_layout(title='Greeks vs Stock Price', xaxis_title='Stock Price (S)', yaxis_title='Greek Value')
     st.plotly_chart(fig)
+
 
