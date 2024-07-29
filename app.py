@@ -1,14 +1,17 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 from scipy.stats import norm
 from scipy.optimize import brentq
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly.graph_objects as go
 import yfinance as yf
 
 # Set page configuration
-st.set_page_config(page_title="Black-Scholes Option Pricing", layout="wide")
+st.set_page_config(page_title="Option Pricing Calculator", layout="wide")
 
+# Define functions for each model (as in your previous code)
+
+@st.cache_data
 def black_scholes(S, K, T, r, sigma, option_type='call'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
@@ -22,6 +25,7 @@ def black_scholes(S, K, T, r, sigma, option_type='call'):
     
     return option_price
 
+@st.cache_data
 def black_scholes_greeks(S, K, T, r, sigma, option_type='call'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
@@ -32,27 +36,31 @@ def black_scholes_greeks(S, K, T, r, sigma, option_type='call'):
     rho = K * T * np.exp(-r * T) * norm.cdf(d2 if option_type == 'call' else -d2)
     return delta, gamma, vega, theta, rho
 
-def get_historical_volatility(ticker):
-    data = yf.download(ticker, period='1y', interval='1d')
-    data['returns'] = data['Adj Close'].pct_change()
-    volatility = np.std(data['returns']) * np.sqrt(252)
-    return volatility
+@st.cache_data
+def binomial_option_pricing(S, K, T, r, sigma, option_type='call', steps=100):
+    dt = T / steps
+    u = np.exp(sigma * np.sqrt(dt))
+    d = 1 / u
+    p = (np.exp(r * dt) - d) / (u - d)
+    
+    ST = np.zeros((steps + 1, steps + 1))
+    for i in range(steps + 1):
+        for j in range(i + 1):
+            ST[j, i] = S * (u ** (i - j)) * (d ** j)
+    
+    option_values = np.zeros((steps + 1, steps + 1))
+    if option_type == 'call':
+        option_values[:, steps] = np.maximum(0, ST[:, steps] - K)
+    elif option_type == 'put':
+        option_values[:, steps] = np.maximum(0, K - ST[:, steps])
+    
+    for i in range(steps - 1, -1, -1):
+        for j in range(i + 1):
+            option_values[j, i] = np.exp(-r * dt) * (p * option_values[j, i + 1] + (1 - p) * option_values[j + 1, i + 1])
+    
+    return option_values[0, 0]
 
-def implied_volatility(S, K, T, r, market_price, option_type='call'):
-    def difference(sigma):
-        return black_scholes(S, K, T, r, sigma, option_type) - market_price
-    # Initial guesses for sigma
-    a = 1e-6
-    b = 1.0
-
-    # Check signs
-    while difference(a) * difference(b) > 0:
-        b *= 2
-        if b > 100:  # To prevent infinite loop
-            raise ValueError("Could not bracket the root within reasonable sigma bounds.")
-
-    return brentq(difference, a, b)
-
+@st.cache_data
 def monte_carlo_simulation(S, K, T, r, sigma, option_type='call', num_simulations=10000):
     dt = T / num_simulations
     prices = np.zeros(num_simulations)
@@ -65,118 +73,206 @@ def monte_carlo_simulation(S, K, T, r, sigma, option_type='call', num_simulation
         payoff = np.maximum(K - prices[-1], 0)
     return np.exp(-r * T) * payoff
 
+@st.cache_data
+def get_historical_volatility(ticker):
+    data = yf.download(ticker, period='1y', interval='1d')
+    data['returns'] = data['Adj Close'].pct_change()
+    volatility = np.std(data['returns']) * np.sqrt(252)
+    return volatility
+
+@st.cache_data
+def implied_volatility(S, K, T, r, market_price, option_type='call'):
+    def difference(sigma):
+        return black_scholes(S, K, T, r, sigma, option_type) - market_price
+
+    a = 1e-6
+    b = 10.0
+
+    try:
+        return brentq(difference, a, b)
+    except ValueError:
+        return None  # Return None if the volatility could not be calculated
+
 # Streamlit app layout
-st.title("Black-Scholes Option Pricing Calculator")
+st.title("Option Pricing Calculator")
 
 st.markdown("""
-### Calculate the price of European call and put options using the Black-Scholes formula.
+### Calculate the price of European call and put options using various models.
 """)
 
 with st.sidebar:
     st.header("Input Parameters")
-    S = st.slider("Current Stock Price (S)", min_value=0.0, max_value=1000.0, value=100.0, step=1.0)
-    K = st.slider("Strike Price (K)", min_value=0.0, max_value=1000.0, value=100.0, step=1.0)
-    T = st.slider("Time to Maturity (T) in years", min_value=0.0, max_value=5.0, value=1.0, step=0.1)
-    r = st.slider("Risk-Free Interest Rate (r)", min_value=0.0, max_value=0.5, value=0.05, step=0.01)
-    sigma = st.slider("Volatility (sigma)", min_value=0.0, max_value=1.0, value=0.2, step=0.01)
-    option_type = st.selectbox("Option Type", ["call", "put"])
-    real_price = st.number_input("Real-time Option Price", min_value=0.0, value=0.0)
-    ticker = st.text_input("Enter Ticker Symbol", "AAPL")
+    model = st.selectbox("Select Option Pricing Model", ["Black-Scholes", "Binomial", "Monte Carlo"])
+    S = st.number_input("Current Stock Price (S)", min_value=0.0, max_value=1000.0, value=100.0, step=1.0, key='S')
+    K = st.number_input("Strike Price (K)", min_value=0.0, max_value=1000.0, value=100.0, step=1.0, key='K')
+    T = st.number_input("Time to Maturity (T) in years", min_value=0.0, max_value=5.0, value=1.0, step=0.1, key='T')
+    r = st.number_input("Risk-Free Interest Rate (r)", min_value=0.0, max_value=0.5, value=0.05, step=0.01, key='r')
+    sigma = st.number_input("Volatility (sigma)", min_value=0.0, max_value=1.0, value=0.2, step=0.01, key='sigma')
+    option_type = st.selectbox("Option Type", ["call", "put"], key='option_type')
+    real_price = st.number_input("Real-time Option Price", min_value=0.0, value=0.0, key='real_price')
+    ticker = st.text_input("Enter Ticker Symbol", "AAPL", key='ticker')
 
-if st.button("Calculate"):
-    option_price = black_scholes(S, K, T, r, sigma, option_type)
-    st.write(f"### The {option_type} option price is: ${option_price:.2f}")
+# Plot selection options
+plot_options = {
+    "Black-Scholes": ["Option Price Heatmap", "Option Price vs Stock Price", "Option Price vs Interest Rate", "Sensitivity Analysis"],
+    "Binomial": ["Option Price Heatmap", "Option Price vs Stock Price", "Option Price vs Interest Rate", "Sensitivity Analysis"],
+    "Monte Carlo": [f"Monte Carlo {option_type.capitalize()} Option Price"]
+}
 
-    tolerance = 0.01  # Tolerance level for price match
+plot_type = st.selectbox("Select plot type to display", plot_options[model], key='plot_type')
+
+if 'calc' not in st.session_state:
+    st.session_state.calc = False
+
+if st.button("Calculate") or st.session_state.calc:
+    st.session_state.calc = True
+
+    option_price = None
+    delta, gamma, vega, theta, rho = [None] * 5
+    hist_vol = None
+    imp_vol = None
+
+    if model == "Black-Scholes":
+        option_price = black_scholes(S, K, T, r, sigma, option_type)
+        delta, gamma, vega, theta, rho = black_scholes_greeks(S, K, T, r, sigma, option_type)
+        hist_vol = get_historical_volatility(ticker)
+        try:
+            imp_vol = implied_volatility(S, K, T, r, real_price, option_type)
+        except ValueError:
+            imp_vol = None
+        st.write(f"### The {option_type} option price using Black-Scholes is: ${option_price:.2f}")
+
+    elif model == "Binomial":
+        option_price = binomial_option_pricing(S, K, T, r, sigma, option_type)
+        st.write(f"### The {option_type} option price using Binomial Model is: ${option_price:.2f}")
+
+    elif model == "Monte Carlo":
+        num_simulations = st.number_input("Number of Simulations", min_value=1000, max_value=100000, value=10000, step=1000, key='num_simulations')
+        option_price = monte_carlo_simulation(S, K, T, r, sigma, option_type, num_simulations)
+        st.write(f"### The {option_type} option price using Monte Carlo Simulation is: ${option_price:.2f}")
+
+    tolerance = 0.01
     if abs(option_price - real_price) <= tolerance:
-        st.success("The real-time option price matches the predicted price within the tolerance level.")
+        st.success("The real-time option price is close to the predicted price within the tolerance level.")
     else:
-        st.warning("The real-time option price does not match the predicted price within the tolerance level.")
+        st.warning("The real-time option price is not close to the predicted price within the tolerance level.")
+
+    data = {
+        "Parameter": ["Current Stock Price", "Strike Price", "Time to Maturity (Years)", "Risk-Free Interest Rate", "Volatility", "Option Type", "Real-time Option Price", "Predicted Option Price", "Delta", "Gamma", "Vega", "Theta", "Rho", "Historical Volatility", "Implied Volatility", "Monte Carlo Option Price"],
+        "Value": [S, K, T, r, sigma, option_type, real_price, option_price, delta if model == "Black-Scholes" else "N/A", gamma if model == "Black-Scholes" else "N/A", vega if model == "Black-Scholes" else "N/A", theta if model == "Black-Scholes" else "N/A", rho if model == "Black-Scholes" else "N/A", hist_vol if model == "Black-Scholes" else "N/A", imp_vol if imp_vol is not None else "N/A", option_price if model == "Monte Carlo" else "N/A"]
+    }
     
-    # Calculate Greeks
-    delta, gamma, vega, theta, rho = black_scholes_greeks(S, K, T, r, sigma, option_type)
-    st.write(f"### Delta: {delta:.2f}")
-    st.write(f"### Gamma: {gamma:.2f}")
-    st.write(f"### Vega: {vega:.2f}")
-    st.write(f"### Theta: {theta:.2f}")
-    st.write(f"### Rho: {rho:.2f}")
+    df = pd.DataFrame(data)
+    st.table(df)
 
-    # Calculate Historical Volatility
-    hist_vol = get_historical_volatility(ticker)
-    st.write(f"### Historical Volatility: {hist_vol:.2%}")
+    # Plot based on user selection
+    if model == "Black-Scholes" or model == "Binomial":
+        if plot_type == "Option Price Heatmap":
+            T_min = st.slider("Minimum Time to Maturity", 0.1, 5.0, 0.1, key='T_min')
+            T_max = st.slider("Maximum Time to Maturity", 0.1, 5.0, 5.0, key='T_max')
+            sigma_min = st.slider("Minimum Volatility", 0.01, 1.0, 0.01, key='sigma_min')
+            sigma_max = st.slider("Maximum Volatility", 0.01, 1.0, 1.0, key='sigma_max')
+            
+            T_range = np.linspace(T_min, T_max, 100)
+            sigma_range = np.linspace(sigma_min, sigma_max, 100)
+            
+            T_grid, sigma_grid = np.meshgrid(T_range, sigma_range)
+            if model == "Black-Scholes":
+                option_prices = np.zeros_like(T_grid)
+                for i in range(T_grid.shape[0]):
+                    for j in range(T_grid.shape[1]):
+                        option_prices[i, j] = black_scholes(S, K, T_grid[i, j], r, sigma_grid[i, j], option_type)
+            else:
+                option_prices = np.zeros_like(T_grid)
+                for i in range(T_grid.shape[0]):
+                    for j in range(T_grid.shape[1]):
+                        option_prices[i, j] = binomial_option_pricing(S, K, T_grid[i, j], r, sigma_grid[i, j], option_type)
+            
+            fig = go.Figure(data=[go.Surface(z=option_prices, x=T_range, y=sigma_range)])
+            fig.update_layout(title='Option Price Heatmap', autosize=True, scene=dict(
+                              xaxis_title='Time to Maturity (T)', yaxis_title='Volatility (σ)', zaxis_title='Option Price'))
+            st.plotly_chart(fig)
+
+        elif plot_type == "Option Price vs Stock Price":
+            S_range = np.linspace(0.1 * S, 2 * S, 100)
+            if model == "Black-Scholes":
+                option_prices = [black_scholes(s, K, T, r, sigma, option_type) for s in S_range]
+            else:
+                option_prices = [binomial_option_pricing(s, K, T, r, sigma, option_type) for s in S_range]
+            fig = go.Figure(data=[go.Scatter(x=S_range, y=option_prices, mode='lines')])
+            fig.update_layout(title='Option Price vs Stock Price', xaxis_title='Stock Price (S)', yaxis_title='Option Price')
+            st.plotly_chart(fig)
+
+        elif plot_type == "Option Price vs Interest Rate":
+            r_range = np.linspace(0.0, 0.2, 100)
+            if model == "Black-Scholes":
+                option_prices = [black_scholes(S, K, T, rate, sigma, option_type) for rate in r_range]
+            else:
+                option_prices = [binomial_option_pricing(S, K, T, rate, sigma, option_type) for rate in r_range]
+            fig = go.Figure(data=[go.Scatter(x=r_range, y=option_prices, mode='lines')])
+            fig.update_layout(title='Option Price vs Interest Rate', xaxis_title='Interest Rate (r)', yaxis_title='Option Price')
+            st.plotly_chart(fig)
+        
+        elif plot_type == "Sensitivity Analysis":
+            fig = go.Figure()
+            
+            S_range = np.linspace(0.1 * S, 2 * S, 100)
+            if model == "Black-Scholes":
+                option_prices_S = [black_scholes(s, K, T, r, sigma, option_type) for s in S_range]
+            else:
+                option_prices_S = [binomial_option_pricing(s, K, T, r, sigma, option_type) for s in S_range]
+            fig.add_trace(go.Scatter(x=S_range, y=option_prices_S, mode='lines', name='Stock Price Sensitivity'))
+            
+            r_range = np.linspace(0.0, 0.2, 100)
+            if model == "Black-Scholes":
+                option_prices_r = [black_scholes(S, K, T, rate, sigma, option_type) for rate in r_range]
+            else:
+                option_prices_r = [binomial_option_pricing(S, K, T, rate, sigma, option_type) for rate in r_range]
+            fig.add_trace(go.Scatter(x=r_range, y=option_prices_r, mode='lines', name='Interest Rate Sensitivity'))
+
+            fig.update_layout(title='Sensitivity Analysis', xaxis_title='Value', yaxis_title='Option Price')
+            st.plotly_chart(fig)
+
+    elif model == "Monte Carlo":
+        if plot_type == f"Monte Carlo {option_type.capitalize()} Option Price":
+            num_simulations = st.number_input("Number of Simulations", min_value=1000, max_value=100000, value=10000, step=1000, key='mc_num_simulations')
+            mc_price = monte_carlo_simulation(S, K, T, r, sigma, option_type, num_simulations)
+            st.write(f"### Monte Carlo Simulation Option Price ({num_simulations} simulations): ${mc_price:.2f}")
+
+            # Optional: Plot distribution of simulation results
+            bins = st.slider("Number of Bins", min_value=10, max_value=100, value=50, step=1, key='mc_bins')
+            price_min = st.slider("Min Option Price", min_value=0.0, max_value=2*S, value=0.0, step=0.1, key='price_min')
+            price_max = st.slider("Max Option Price", min_value=0.0, max_value=2*S, value=2*S, step=0.1, key='price_max')
+            
+            prices = np.array([monte_carlo_simulation(S, K, T, r, sigma, option_type, 1) for _ in range(num_simulations)])
+            fig = go.Figure(data=[go.Histogram(x=prices, nbinsx=bins)])
+            fig.update_layout(title='Monte Carlo Simulation Results', xaxis_title='Option Price', yaxis_title='Frequency', xaxis=dict(range=[price_min, price_max]))
+            st.plotly_chart(fig)
+
+# Greeks visualization for Black-Scholes model
+if model == "Black-Scholes" and plot_type == "Sensitivity Analysis":
+    S_range = np.linspace(0.5 * S, 1.5 * S, 100)
+    delta_values = []
+    gamma_values = []
+    vega_values = []
+    theta_values = []
+    rho_values = []
+
+    for s in S_range:
+        delta, gamma, vega, theta, rho = black_scholes_greeks(s, K, T, r, sigma, option_type)
+        delta_values.append(delta)
+        gamma_values.append(gamma)
+        vega_values.append(vega)
+        theta_values.append(theta)
+        rho_values.append(rho)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=S_range, y=delta_values, mode='lines', name='Delta'))
+    fig.add_trace(go.Scatter(x=S_range, y=gamma_values, mode='lines', name='Gamma'))
+    fig.add_trace(go.Scatter(x=S_range, y=vega_values, mode='lines', name='Vega'))
+    fig.add_trace(go.Scatter(x=S_range, y=theta_values, mode='lines', name='Theta'))
+    fig.add_trace(go.Scatter(x=S_range, y=rho_values, mode='lines', name='Rho'))
     
-    # Calculate Implied Volatility
-    imp_vol = implied_volatility(S, K, T, r, real_price, option_type)
-    st.write(f"### Implied Volatility: {imp_vol:.2%}")
+    fig.update_layout(title='Greeks vs Stock Price', xaxis_title='Stock Price (S)', yaxis_title='Greek Value')
+    st.plotly_chart(fig)
 
-    # Run Monte Carlo Simulation
-    mc_price = monte_carlo_simulation(S, K, T, r, sigma, option_type)
-    st.write(f"### Monte Carlo {option_type.capitalize()} Option Price: ${mc_price:.2f}")
-
-    # Plotting the option price sensitivity
-    x = np.linspace(0, 5, 100)
-    y = [black_scholes(S, K, t, r, sigma, option_type) for t in x]
-
-    fig, ax = plt.subplots()
-    ax.plot(x, y, label='Option Price', color='blue')
-    ax.set_xlabel('Time to Maturity (Years)')
-    ax.set_ylabel('Option Price')
-    ax.legend()
-    st.pyplot(fig)
-
-    # Creating a heat map
-    T_values = np.linspace(0.01, 2, 50)
-    sigma_values = np.linspace(0.01, 1, 50)
-    T_grid, sigma_grid = np.meshgrid(T_values, sigma_values)
-    Z = np.array([[black_scholes(S, K, T_grid[i, j], r, sigma_grid[i, j], option_type) for j in range(T_grid.shape[1])] for i in range(T_grid.shape[0])])
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.heatmap(Z, xticklabels=np.round(T_values, 2), yticklabels=np.round(sigma_values, 2), cmap="YlGnBu", ax=ax)
-    ax.set_xlabel("Time to Maturity (Years)")
-    ax.set_ylabel("Volatility (Sigma)")
-    st.write("### Option Price Heatmap")
-    st.pyplot(fig)
-
-    st.markdown("""
-    ## Sensitivity Analysis
-    ### Stock Price
-    """)
-
-    # Sensitivity analysis for Stock Price
-    S_values = np.linspace(0, 200, 100)
-    prices = [black_scholes(S_val, K, T, r, sigma, option_type) for S_val in S_values]
-
-    fig, ax = plt.subplots()
-    ax.plot(S_values, prices, label='Option Price vs Stock Price')
-    ax.set_xlabel('Stock Price (S)')
-    ax.set_ylabel('Option Price')
-    ax.legend()
-    st.pyplot(fig)
-
-    st.markdown("""
-    ### Interest Rate
-    """)
-
-    # Sensitivity analysis for Interest Rate
-    r_values = np.linspace(0, 0.2, 100)
-    prices = [black_scholes(S, K, T, r_val, sigma, option_type) for r_val in r_values]
-
-    fig, ax = plt.subplots()
-    ax.plot(r_values, prices, label='Option Price vs Interest Rate')
-    ax.set_xlabel('Risk-Free Interest Rate (r)')
-    ax.set_ylabel('Option Price')
-    ax.legend()
-    st.pyplot(fig)
-
-with st.expander("See the formula"):
-    st.markdown("""
-    The Black-Scholes formula for a call option is:
-
-    $$C = S \cdot N(d1) - K \cdot e^{-r \cdot T} \cdot N(d2)$$
-
-    Where:
-
-    $$d1 = \frac{\log(S / K) + (r + \sigma^2 / 2) \cdot T}{\sigma \cdot \sqrt{T}}$$
-
-    $$d2 = d1 - \sigma \cdot \sqrt{T}$$
-    """)
